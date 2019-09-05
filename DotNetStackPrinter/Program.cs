@@ -7,6 +7,7 @@ using System.Linq;
 namespace DotNetStackPrinter {
     internal class Program {
         private class CommandLineOptions {
+
             [Option('v', "verbose", Default = false, HelpText = "When true, prints module names and argument values")]
             public bool Verbose { get; set; }
 
@@ -16,8 +17,14 @@ namespace DotNetStackPrinter {
             [Option('s', "keep-stacks-separate", Default = false, HelpText = "By default, this program will combine common prefixes of stack traces. To see each individual thread separately, pass in this option.")]
             public bool KeepStacksSeparate { get; set; }
 
-            [Value(0, MetaName = "pid", HelpText = "Target process ID", Required = true)]
-            public int Pid { get; set; }
+            [Option('r', "num-repeats", Default = 1, HelpText = "If this is more than 1, we will print out the stack trace, wait for repeat-delay-ms, then print out the stack trace again, etc. Kind of a poor man's profiling")]
+            public int NumRepeats { get; set; }
+
+            [Option('r', "repeat-delay-ms", Default = 1000, HelpText = "If num-repeats is more than 1, we will wait this many milliseconds between each stack trace")]
+            public int RepeatDelayMs { get; set; }
+
+            [Value(0, MetaName = "pid-or-name", HelpText = "Target process ID or process name. For process name, use `blotter` rather than `blotter.exe`", Required = true)]
+            public string PidOrName { get; set; }
         }
 
         private class StackTrace {
@@ -37,13 +44,32 @@ namespace DotNetStackPrinter {
                 .WithParsed(opts => RunOptionsAndReturnExitCode(opts));
 
         private static int RunOptionsAndReturnExitCode(CommandLineOptions opts) {
-            var stackTraces = GetStackTracesFromProcess(opts.Pid, opts.Depth, opts.Verbose);
-
-            if (opts.KeepStacksSeparate)
-                PrintStackTraces(stackTraces, opts.Depth);
+            int[] pids;
+            if (int.TryParse(opts.PidOrName, out var pid))
+                pids = new[] { pid };
             else
-                MergeAndPrintStackTraces(stackTraces);
-            
+                pids = System.Diagnostics.Process.GetProcessesByName(opts.PidOrName).Select(p => p.Id).ToArray();
+
+            if (pids.Length == 0)
+                throw new ArgumentException($"Could not find any processes by name {opts.PidOrName}");
+
+            for (var i = 0; i < opts.NumRepeats; i++) {
+                if (i != 0)
+                    System.Threading.Thread.Sleep(opts.RepeatDelayMs);
+
+                foreach (var pid2 in pids) {
+                    Console.WriteLine($"Pid #:{pid2}");
+
+                    var stackTraces = GetStackTracesFromProcess(pid2, opts.Depth, opts.Verbose);
+
+                    if (opts.KeepStacksSeparate)
+                        PrintStackTraces(stackTraces, opts.Depth);
+                    else
+                        MergeAndPrintStackTraces(stackTraces);
+
+                    Console.WriteLine();
+                }
+            }
             return 0;
         }
         
